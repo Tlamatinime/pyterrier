@@ -1,5 +1,99 @@
-from . import Transformer
+from . import Transformer, ops, rewrite
 from typing import List
+
+def _check_graphviz(name="this functionality"):
+    try:
+        import graphviz
+    except ImportError:
+        raise ImportError("You must pip install graphviz to use %s" % name)
+    
+def render(pipe : Transformer):
+    """
+    Returns a `graphviz <https://graphviz.readthedocs.io/en/stable/>`_ Graph visualisation of 
+    the provided transformer pipeline, which can be easily displayed in a Jupyter/Colab Notebook.
+
+    Example Usage in a Notebook::
+        
+        pipe = (dph % 5) >> qe >> dph
+        pt.debug.render(pipe)
+
+    """
+
+
+    _COMPOSE_AS_NODE = False
+
+    _check_graphviz("pt.debug.render()")
+
+    if not isinstance(pipe, Transformer):
+        raise TypeError("%s is not a pt.Transformer" % type(pipe))
+
+    def traverse(pipe, dot, depth=0):
+        if isinstance(pipe, ops.ScalarProductTransformer):
+            id_node = "*"
+            dot.node(id_node, label="*", shape='diamond')
+            model0 = traverse(pipe.transformer, dot, depth=depth+1)
+            dot.edge(model0, id_node)
+            dot.node(id_node + "_cutoff", label=str(pipe.scalar), shape='rect')
+            dot.edge(id_node + "_cutoff", id_node)
+            return id_node
+        elif isinstance(pipe, ops.RankCutoffTransformer):
+            id_node = "%"
+            dot.node(id_node, label="%", shape='diamond')
+            model0 = traverse(pipe.transformer, dot, depth=depth+1)
+            dot.edge(model0, id_node)
+            dot.node(id_node + "_cutoff", label=str(pipe.cutoff), shape='rect')
+            dot.edge(id_node + "_cutoff", id_node)
+            return id_node
+        elif isinstance(pipe, ops.FeatureUnionPipeline):
+            assert len(pipe.models) == 2
+
+            model0 = traverse(pipe.models[0], dot, depth=depth+1)
+            model1 = traverse(pipe.models[1], dot, depth=depth+1)
+
+            id_compose = "**" + str(depth)
+            #print("drawing ** %s joining %s with %s"   % (id_compose, model0, model1))
+
+            #dot.edge(model0, model1, label="**")
+            dot.node(id_compose, label="**", shape='diamond')
+            dot.edge(id_compose, model0)
+            dot.edge(id_compose, model1)
+            return id_compose
+
+        elif isinstance(pipe, ops.ComposedPipeline):
+            assert len(pipe.models) == 2
+            
+
+            model0 = traverse(pipe.models[0], dot, depth=depth+1)
+            model1 = traverse(pipe.models[1], dot, depth=depth+1)
+
+            id_compose = ">>" + str(depth)
+            #print("drawing >> %s joining %s with %s"   % (id_compose, model0, model1))
+
+            if _COMPOSE_AS_NODE:
+                dot.node(id_compose, label=">>", shape='cds')
+                dot.edge(id_compose, model0)
+                dot.edge(id_compose, model1)
+                return id_compose
+        
+            else:
+                dot.edge(model0, model1, label=">>")
+                return model1
+        
+        else:
+
+            id_node = str(depth) + str(pipe)
+            label=str(pipe)
+            if isinstance(pipe, rewrite.QueryExpansion):
+                label = 'QE' 
+            dot.node(id_node, label=label)
+            #print("drawing node %s" % id_node)
+            return id_node
+
+    from graphviz import Digraph
+    dot = Digraph()
+    traverse(pipe, dot)
+    return dot
+
 
 def print_columns(by_query : bool = False, message : str = None) -> Transformer:
     """
